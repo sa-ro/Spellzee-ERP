@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      docker:
+        image: docker:dind
+        options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # @spellzee/domain: pure scoring logic, no database.
+      - name: Domain unit tests
+        run: pnpm --filter @spellzee/domain test
+
+      # @spellzee/db: Testcontainers boots a real Postgres 16 and applies every
+      # migration in order. These tests exist specifically to prove that the
+      # constraints, triggers and grants REJECT the bad case (CLAUDE.md §6) —
+      # they are not optional coverage, they are the point.
+      - name: Database migration + invariant tests
+        run: pnpm --filter @spellzee/db test
+
+      # rule 26 (DD §42): fails the build if any core table grows an external-id
+      # column outside external_id_map. Run against the same throwaway instance
+      # the invariant tests already stood up would be ideal; here we spin a
+      # fresh one for isolation.
+      - name: Rule 26 — no external ID columns outside external_id_map
+        run: |
+          docker run -d --name ci-check-db -e POSTGRES_PASSWORD=ci -e POSTGRES_DB=spellzee \
+            -p 55432:5432 postgres:16-alpine
+          until docker exec ci-check-db pg_isready -U postgres; do sleep 1; done
+          export DATABASE_URL="postgres://postgres:ci@localhost:55432/spellzee"
+          pnpm --filter @spellzee/db migrate
+          result=$(psql "$DATABASE_URL" -f scripts/check-no-external-id-columns.sql -t -A)
+          if [ -n "$result" ]; then
+            echo "Rule 26 violated — external ID column(s) found outside external_id_map:"
+            echo "$result"
+            exit 1
+          fi
+          docker rm -f ci-check-db

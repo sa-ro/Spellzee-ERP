@@ -1,0 +1,18 @@
+{
+  "name": "spellzee-erp",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "db:migrate": "pnpm --filter @spellzee/db migrate",
+    "db:seed": "pnpm --filter @spellzee/db seed",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
